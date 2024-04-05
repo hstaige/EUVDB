@@ -1,3 +1,5 @@
+import warnings
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 
@@ -303,12 +305,57 @@ def write_dataset_to_archive(dataset, zip_archive):
         if isinstance(obj, np.generic):
             return obj.item()
 
+    # c = CosmicRayFilter()
     filepath = dataset.name.replace('/', '_') + '.txt'
     attr_str = json.dumps({key: value for key, value in dataset.attrs.items()}, default=np_encoder)
     s = StringIO()
     np.savetxt(s, dataset[...], newline=',', fmt='%8d')
 
     zip_archive.writestr(filepath, attr_str + '\n' + '-' * 32 + '\n' + s.getvalue())
+
+
+class CosmicRayFilter:
+    """Cosmic Ray Filter class for removal of cosmic rays from spectra.
+    """
+
+    def __init__(self, filterval=5):
+        self.filterval = filterval
+
+    def apply(self, data, combine=True):
+        """
+        Apply filter to input data.
+
+        Returns the spectra with cosmic rays removed.
+        """
+        data = data.astype(float)
+        nr_frames, camera_size = data.shape
+
+        if nr_frames == 1:
+            warnings.warn('Only 1 frame, can''t detect cosmic rays', RuntimeWarning)
+            return data[0]
+
+        for pixel in range(camera_size):  # loop through each pixel
+            allframes = data[:, pixel]
+            cosmic_frames = []
+            for frame in range(nr_frames):  # loop through each frame
+
+                testval = allframes[frame]
+                testframes = np.delete(allframes, frame)
+                poisson_noise = sum([np.sqrt(val) for val in testframes]) / (nr_frames - 1)
+                mean = sum(testframes) / (nr_frames - 1)
+
+                # if outside range add its index to a list
+                if testval > (mean + (self.filterval * poisson_noise)):
+                    cosmic_frames.append(frame)
+
+            if len(cosmic_frames) > 0:  # if cosmic ray found replace with mean value of other pixels
+                non_cosmic_avg = np.mean(np.delete(allframes, cosmic_frames))
+                data[cosmic_frames, pixel] = non_cosmic_avg
+
+        if combine:
+            return np.sum(data, axis=0)
+        else:
+            return data
 
 
 NEUV = New_EUVH5_Handler(h5_file=H5_FILE_LOC,

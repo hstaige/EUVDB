@@ -17,9 +17,9 @@ from datetime import datetime
 from collections import defaultdict
 from uuid import uuid4
 from io import StringIO
-from pkg_resources import resource_filename
+# from pkg_resources import resource_filename
 # noinspection PyUnresolvedReferences
-from euv_fitting.calibrate.utils import SpeReader
+# from euv_fitting.calibrate.utils import SpeReader # Used to create database, not neccesary for API
 from zipfile import ZipFile
 
 app = FastAPI()
@@ -118,10 +118,10 @@ class New_EUVH5_Handler:
     curr_id: int = 0
 
     def __init__(self, in_file=None, meta_file=None, h5_file=None, spe_folder=None):
-        self.in_file = in_file if in_file else resource_filename('euv_fitting.euvh5', 'EUV_data.xlsx')
-        self.h5_file = h5_file if h5_file else resource_filename('euv_fitting.euvh5', 'EUV.h5')
-        self.meta_file = meta_file if meta_file else resource_filename('euv_fitting.euvh5', 'EUV_meta.pkl')
-        self.spe_folder = spe_folder if spe_folder else resource_filename('euv_fitting.euvh5', 'EUV_CCD2')
+        self.in_file = in_file  # if in_file else resource_filename('euv_fitting.euvh5', 'EUV_data.xlsx')
+        self.h5_file = h5_file  # if h5_file else resource_filename('euv_fitting.euvh5', 'EUV.h5')
+        self.meta_file = meta_file  # if meta_file else resource_filename('euv_fitting.euvh5', 'EUV_meta.pkl')
+        self.spe_folder = spe_folder  # if spe_folder else resource_filename('euv_fitting.euvh5', 'EUV_CCD2')
 
         self.RESULTS_DIR = 'results/'
         self.DATE_FORMAT = "%Y/%m/%d"

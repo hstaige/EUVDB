@@ -1,5 +1,3 @@
-import warnings
-
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 
@@ -273,7 +271,6 @@ class New_EUVH5_Handler:
                     print(df['datetime_' + suffix].head())
                 key = key.replace('date', 'datetime')
 
-            print(key, search_value)
             if 'lower_' in key:
                 suffix = key.split('lower_')[1]
                 df = df[df[suffix] >= search_value]
@@ -305,57 +302,39 @@ def write_dataset_to_archive(dataset, zip_archive):
         if isinstance(obj, np.generic):
             return obj.item()
 
-    # c = CosmicRayFilter()
     filepath = dataset.name.replace('/', '_') + '.txt'
     attr_str = json.dumps({key: value for key, value in dataset.attrs.items()}, default=np_encoder)
     s = StringIO()
-    np.savetxt(s, dataset[...], newline=',', fmt='%8d')
+    np.savetxt(s, filter_cosmic_rays(dataset[...]), newline=',', fmt='%8d')
 
     zip_archive.writestr(filepath, attr_str + '\n' + '-' * 32 + '\n' + s.getvalue())
 
 
-class CosmicRayFilter:
-    """Cosmic Ray Filter class for removal of cosmic rays from spectra.
-    """
+def filter_cosmic_rays(data, filterval=5, combine=True):
+    # Vectorized form of CosmicRayFilter
+    # In code below, loo stands for Leave One Out
+    data = data.copy()
+    nr_frames, camera_size = data.shape
 
-    def __init__(self, filterval=5):
-        self.filterval = filterval
+    if nr_frames == 1:
+        return data
 
-    def apply(self, data, combine=True):
-        """
-        Apply filter to input data.
+    sqrts = np.sqrt(data)
+    noises = np.expand_dims(np.sum(sqrts, axis=0), axis=0)
+    noises = np.repeat(noises, axis=0, repeats=nr_frames)
+    loo_noises = (noises - sqrts) / (nr_frames - 1)
 
-        Returns the spectra with cosmic rays removed.
-        """
-        data = data.astype(float)
-        nr_frames, camera_size = data.shape
+    means = np.expand_dims(np.sum(data, axis=0), axis=0)
+    means = np.repeat(means, axis=0, repeats=nr_frames)
+    loo_means = (means - data) / (nr_frames - 1)
+    residuals = loo_means - data
 
-        if nr_frames == 1:
-            warnings.warn('Only 1 frame, can''t detect cosmic rays', RuntimeWarning)
-            return data[0]
+    mask = residuals >= (filterval * loo_noises)
+    data[mask] = loo_means[mask]
 
-        for pixel in range(camera_size):  # loop through each pixel
-            allframes = data[:, pixel]
-            cosmic_frames = []
-            for frame in range(nr_frames):  # loop through each frame
-
-                testval = allframes[frame]
-                testframes = np.delete(allframes, frame)
-                poisson_noise = sum([np.sqrt(val) for val in testframes]) / (nr_frames - 1)
-                mean = sum(testframes) / (nr_frames - 1)
-
-                # if outside range add its index to a list
-                if testval > (mean + (self.filterval * poisson_noise)):
-                    cosmic_frames.append(frame)
-
-            if len(cosmic_frames) > 0:  # if cosmic ray found replace with mean value of other pixels
-                non_cosmic_avg = np.mean(np.delete(allframes, cosmic_frames))
-                data[cosmic_frames, pixel] = non_cosmic_avg
-
-        if combine:
-            return np.sum(data, axis=0)
-        else:
-            return data
+    if combine:
+        return data.sum(axis=0)
+    return data
 
 
 NEUV = New_EUVH5_Handler(h5_file=H5_FILE_LOC,

@@ -2,7 +2,7 @@ import requests
 import json
 import timeit
 
-ne_data = {'element': ['Ne']}
+ne_data = {'element': ['Ne', 'Ba'], }
 ne_be_data = {'element': ['Ne', 'Ba']}
 
 data = ne_data

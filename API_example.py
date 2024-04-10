@@ -6,7 +6,7 @@ import h5py
 import pandas as pd
 
 from types import UnionType
-from typing import get_origin, get_args, Any
+from typing import get_origin, get_args, Any, Literal
 from pydantic import BaseModel
 from numbers import Number
 
@@ -180,6 +180,7 @@ class New_EUVH5_Handler:
                     try:
                         arr = S.load_img()
                         ds = g.create_dataset(row['File name'].replace('.spe', ''), data=arr, compression='gzip')
+                        ds.attrs['run'] = run
                     except ValueError:
                         print(S.get_size(), spe_path)
                         bad_links += 1
@@ -223,6 +224,8 @@ class New_EUVH5_Handler:
                 value = ':'.join(value[i:i + 2] for i in range(0, len(value), 2))
             if key == 'date_taken' and value:
                 value = datetime.strptime(value, "%d%b%Y").strftime(self.DATE_FORMAT)
+            if key == 'file_name' and value:
+                value = value.replace('.SPE', '')
             try:
                 dataset.attrs[key] = value
             except ValueError:
@@ -252,14 +255,12 @@ class New_EUVH5_Handler:
         self.add_auto_attrs(dataset)
         self.write_meta_dict(dataset)
 
-    def search(self, query_dict):
+    def search(self, query_dict, return_type: Literal["metadata", "spectra"] = "metadata"):
         # filters df until out of query_dict, then retrieves files from EUV.h5
-        f = h5py.File(self.h5_file, 'r+')
         df = pd.read_pickle(self.meta_file)
 
         for key, search_value in query_dict.items():
             if 'date_' in key:
-                print('Found a date!')
                 suffix = key.split('date_')[1]
                 time = query_dict.get('time_' + suffix, '00:00:00')
                 search_value = datetime.strptime(search_value + time, self.DATE_FORMAT + self.TIME_FORMAT)
@@ -267,8 +268,11 @@ class New_EUVH5_Handler:
                 if 'datetime_' + suffix not in df:
                     def str_to_datetime(x):
                         return datetime.strptime(x, self.DATE_FORMAT + self.TIME_FORMAT)
+
+                    df = df[df['date_' + suffix].notna() & df['time_' + suffix].notna()]
+
                     df['datetime_' + suffix] = (df['date_' + suffix] + df['time_' + suffix]).apply(str_to_datetime)
-                    print(df['datetime_' + suffix].head())
+
                 key = key.replace('date', 'datetime')
 
             if 'lower_' in key:
@@ -286,7 +290,11 @@ class New_EUVH5_Handler:
                 else:
                     df = df[df[key].isin(search_value)]
 
-        return f, [f[path] for path in df['path']]
+        if return_type == 'metadata':
+            return df
+        elif return_type == 'spectra':
+            f = h5py.File(self.h5_file, 'r')
+            return f, [f[path] for path in df['path']]
 
 
 def create_datasets_archive(datasets, filename='write_test.zip'):
@@ -348,8 +356,19 @@ def read_root():
     return {"Hello": "World"}
 
 
-@app.put("/spectra")
-def update_item(search_spectra_metadata: Search_Spectra_Metadata):
+@app.get("/spectra/metadata")
+def get_metadata(search_spectra_metadata: Search_Spectra_Metadata):
+    ssm = search_spectra_metadata
+    ssm.validate_submission()
+    print(vars(ssm))
+
+    metadata = NEUV.search({key: value for key, value in vars(ssm).items() if value is not None})
+
+    return metadata.to_json(orient='records')
+
+
+@app.get("/spectra/")
+def get_spectra(search_spectra_metadata: Search_Spectra_Metadata):
     ssm = search_spectra_metadata
     ssm.validate_submission()
 

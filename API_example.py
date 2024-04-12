@@ -294,7 +294,7 @@ class New_EUVH5_Handler:
             page_number = 0
             low_index, high_index = 0, len(df) - 1
         else:
-            low_index, high_index = per_page * page_number, max(len(df) - 1, per_page * (page_number+1))
+            low_index, high_index = per_page * page_number, min(len(df) - 1, per_page * (page_number+1))
 
         search_metadata = {"page": page_number, "per_page": per_page,
                            "page_count": high_index - low_index, "total_count": len(df)}
@@ -364,17 +364,19 @@ def np_encoder(obj):
         return obj.item()
 
 
-@app.get("/")
-def read_root():
+@app.get("/hello")
+def read_root(test: int = 1, page_number: int = 0):
+    print(test, page_number)
     return {"Hello": "World"}
 
 
-@app.get("/spectra/metadata")
-def get_metadata(search_spectra_metadata: Search_Spectra_Metadata):
+@app.get("/spectra/metadata/")
+def get_metadata(search_spectra_metadata: Search_Spectra_Metadata, page=0, per_page=0):
     ssm = search_spectra_metadata
     ssm.validate_submission()
 
-    spectra_metadata, search_metadata = NEUV.search({key: value for key, value in vars(ssm).items() if value is not None})
+    spectra_metadata, search_metadata = NEUV.search({key: value for key, value in vars(ssm).items() if value is not None},
+                                                    return_type="metadata", page_number=page, per_page=per_page)
 
     response = dict()
     response['records'] = spectra_metadata.to_dict(orient='list')
@@ -383,12 +385,13 @@ def get_metadata(search_spectra_metadata: Search_Spectra_Metadata):
     return json.dumps(response, default=np_encoder)
 
 
-@app.get("/spectra/spectra")
-def get_spectra(search_spectra_metadata: Search_Spectra_Metadata):
+@app.get("/spectra/data")
+def get_spectra(search_spectra_metadata: Search_Spectra_Metadata, page: int = 0, per_page: int = 0):
     ssm = search_spectra_metadata
     ssm.validate_submission()
 
-    f, datasets, search_metadata = NEUV.search({key: value for key, value in vars(ssm).items() if value is not None}, return_type="spectra")
+    f, datasets, search_metadata = NEUV.search({key: value for key, value in vars(ssm).items() if value is not None},
+                                               return_type="spectra", page_number=page, per_page=per_page)
 
     response = dict()
     response['records'] = {ds.attrs['path']: {'data': ds[...], **ds.attrs} for ds in datasets}

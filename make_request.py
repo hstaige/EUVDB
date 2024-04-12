@@ -17,11 +17,13 @@ data = ne_be_data
 
 
 def make_spectra_request():
-    res = requests.get(f'{API_URL}/spectra/spectra', data=json.dumps(data))
+    res = requests.get(f'{API_URL}/spectra/data/?page=0&per_page=50', data=json.dumps(data))
 
     res = json.loads(json.loads(res.content))
 
     spectra_data, search_metadata = res['records'], res['metadata']
+
+    print(len(spectra_data))
 
 
 def make_metadata_request():

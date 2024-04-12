@@ -4,24 +4,35 @@ import timeit
 import pandas as pd
 from io import StringIO
 
+pd.set_option('display.max_columns', 10)
+pd.set_option('display.width', 180)
+
+API_URL = "http://127.0.0.1:8000"
+# API_URL = "http://67.205.178.106"
+
 ne_data = {}
 ne_be_data = {'element': ['Ne', 'Ba']}
 
-data = ne_data
+data = ne_be_data
 
 
 def make_spectra_request():
-    r = requests.get(r'http://67.205.178.106/spectra', data=json.dumps(data))
-    with open('readTest/read_test.zip', 'wb') as fo:
-        fo.write(r.content)
+    res = requests.get(f'{API_URL}/spectra/spectra', data=json.dumps(data))
+
+    res = json.loads(json.loads(res.content))
+
+    spectra_data, search_metadata = res['records'], res['metadata']
 
 
 def make_metadata_request():
-    r = requests.get(r'http://67.205.178.106/spectra/metadata', data=json.dumps(data))
-    metadata = json.loads(r.content)
-    print(metadata)
-    df = pd.read_json(StringIO(metadata), orient='records')
-    print(df.columns)
+    res = requests.get(f'{API_URL}/spectra/metadata', data=json.dumps(data))
+    res = json.loads(json.loads(res.content))
+
+    spectra_metadata, search_metadata = res['records'], res['metadata']
+
+    df = pd.DataFrame(spectra_metadata)
+    print(df.head(5))
+    print(search_metadata)
 
 
-print(timeit.timeit(make_metadata_request, number=10))
+print(timeit.timeit(make_spectra_request, number=10))

@@ -1,5 +1,4 @@
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
 
 import numpy as np
 import h5py
@@ -255,7 +254,7 @@ class New_EUVH5_Handler:
         self.add_auto_attrs(dataset)
         self.write_meta_dict(dataset)
 
-    def search(self, query_dict, return_type: Literal["metadata", "spectra"] = "metadata"):
+    def search(self, query_dict, return_type: Literal["metadata", "spectra"] = "metadata", per_page=0, page_number=0):
         # filters df until out of query_dict, then retrieves files from EUV.h5
         df = pd.read_pickle(self.meta_file)
 
@@ -290,32 +289,41 @@ class New_EUVH5_Handler:
                 else:
                     df = df[df[key].isin(search_value)]
 
+        if per_page == 0:
+            per_page = len(df) - 1
+            page_number = 0
+            low_index, high_index = 0, len(df) - 1
+        else:
+            low_index, high_index = per_page * page_number, max(len(df) - 1, per_page * (page_number+1))
+
+        search_metadata = {"page": page_number, "per_page": per_page,
+                           "page_count": high_index - low_index, "total_count": len(df)}
+
+        df = df.iloc[low_index:high_index]
+
         if return_type == 'metadata':
-            return df
+            return df, search_metadata
         elif return_type == 'spectra':
             f = h5py.File(self.h5_file, 'r')
-            return f, [f[path] for path in df['path']]
+            return f, [f[path] for path in df['path']], search_metadata
 
 
-def create_datasets_archive(datasets, filename='write_test.zip'):
-    zip_archive_path = os.path.join('writeTest', filename)
-    with open(zip_archive_path, 'wb') as fo:
-        with ZipFile(fo, "w") as zip_archive:
-            for dataset in datasets:
-                write_dataset_to_archive(dataset, zip_archive)
-
-
-def write_dataset_to_archive(dataset, zip_archive):
-    def np_encoder(obj):
-        if isinstance(obj, np.generic):
-            return obj.item()
-
-    filepath = dataset.name.replace('/', '_') + '.txt'
-    attr_str = json.dumps({key: value for key, value in dataset.attrs.items()}, default=np_encoder)
-    s = StringIO()
-    np.savetxt(s, filter_cosmic_rays(dataset[...]), newline=',', fmt='%8d')
-
-    zip_archive.writestr(filepath, attr_str + '\n' + '-' * 32 + '\n' + s.getvalue())
+# def create_datasets_archive(datasets, filename='write_test.zip'):
+#     zip_archive_path = os.path.join('writeTest', filename)
+#     with open(zip_archive_path, 'wb') as fo:
+#         with ZipFile(fo, "w") as zip_archive:
+#             for dataset in datasets:
+#                 write_dataset_to_archive(dataset, zip_archive)
+#
+#
+# def write_dataset_to_archive(dataset, zip_archive):
+#
+#     filepath = dataset.name.replace('/', '_') + '.txt'
+#     attr_str = json.dumps({key: value for key, value in dataset.attrs.items()}, default=np_encoder)
+#     s = StringIO()
+#     np.savetxt(s, filter_cosmic_rays(dataset[...]), newline=',', fmt='%8d')
+#
+#     zip_archive.writestr(filepath, attr_str + '\n' + '-' * 32 + '\n' + s.getvalue())
 
 
 def filter_cosmic_rays(data, filterval=5, combine=True):
@@ -351,6 +359,11 @@ NEUV = New_EUVH5_Handler(h5_file=H5_FILE_LOC,
 Search_Spectra_Metadata = make_search_class(Spectra_Metadata, needs_bounds=['date_taken', 'date_added'])
 
 
+def np_encoder(obj):
+    if isinstance(obj, np.generic):
+        return obj.item()
+
+
 @app.get("/")
 def read_root():
     return {"Hello": "World"}
@@ -360,27 +373,27 @@ def read_root():
 def get_metadata(search_spectra_metadata: Search_Spectra_Metadata):
     ssm = search_spectra_metadata
     ssm.validate_submission()
-    print(vars(ssm))
 
-    metadata = NEUV.search({key: value for key, value in vars(ssm).items() if value is not None})
+    spectra_metadata, search_metadata = NEUV.search({key: value for key, value in vars(ssm).items() if value is not None})
 
-    return metadata.to_json(orient='records')
+    response = dict()
+    response['records'] = spectra_metadata.to_dict(orient='list')
+    response['metadata'] = search_metadata
+
+    return json.dumps(response, default=np_encoder)
 
 
-@app.get("/spectra/")
+@app.get("/spectra/spectra")
 def get_spectra(search_spectra_metadata: Search_Spectra_Metadata):
     ssm = search_spectra_metadata
     ssm.validate_submission()
 
-    def iterfile():
-        with open('writeTest/write_test.zip', 'rb') as zf:
-            while chunk := zf.read(CHUNK_SIZE):
-                yield chunk
+    f, datasets, search_metadata = NEUV.search({key: value for key, value in vars(ssm).items() if value is not None}, return_type="spectra")
 
-    f, datasets = NEUV.search({key: value for key, value in vars(ssm).items() if value is not None})
-    print(vars(ssm))
-    print(len(datasets))
-    create_datasets_archive(datasets)
+    response = dict()
+    response['records'] = {ds.attrs['path']: {'data': ds[...], **ds.attrs} for ds in datasets}
+    response['metadata'] = search_metadata
+
     f.close()
 
-    return StreamingResponse(iterfile())
+    return json.dumps(response, default=np_encoder)

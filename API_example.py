@@ -371,7 +371,7 @@ def read_root(test: int = 1, page_number: int = 0):
 
 
 @app.get("/spectra/metadata/")
-def get_metadata(search_spectra_metadata: Search_Spectra_Metadata, page=0, per_page=0):
+def get_metadata(search_spectra_metadata: Search_Spectra_Metadata, page: int=0, per_page: int=0):
     ssm = search_spectra_metadata
     ssm.validate_submission()
 

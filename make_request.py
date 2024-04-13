@@ -17,24 +17,26 @@ data = ne_be_data
 
 
 def make_spectra_request():
-    res = requests.get(f'{API_URL}/spectra/data/?page=0&per_page=50', data=json.dumps(data))
+    res_raw = requests.get(f'{API_URL}/spectra/data?page=1&per_page=50', data=json.dumps(data))
 
-    res = json.loads(json.loads(res.content))
+    res = json.loads(json.loads(res_raw.content))
 
     spectra_data, search_metadata = res['records'], res['metadata']
 
     print(len(spectra_data))
+    print(len(res_raw.content))
 
 
 def make_metadata_request():
-    res = requests.get(f'{API_URL}/spectra/metadata', data=json.dumps(data))
-    res = json.loads(json.loads(res.content))
+    res_raw = requests.get(f'{API_URL}/spectra/metadata?page=0&per_page=50', data=json.dumps(data))
+    res = json.loads(json.loads(res_raw.content))
 
     spectra_metadata, search_metadata = res['records'], res['metadata']
 
     df = pd.DataFrame(spectra_metadata)
     print(df.head(5))
     print(search_metadata)
+    print(len(res_raw.content))
 
 
-print(timeit.timeit(make_spectra_request, number=10))
+print(timeit.timeit(make_metadata_request, number=10))

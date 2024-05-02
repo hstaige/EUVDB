@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Query
 
 import numpy as np
 import h5py
@@ -6,7 +6,7 @@ import pandas as pd
 
 from types import UnionType
 from typing import get_origin, get_args, Any, Literal
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from numbers import Number
 
 import re
@@ -48,6 +48,69 @@ class Spectra_Metadata(BaseModel):
     lab_book_links: list[str] | None = None
 
 
+class SearchSpectraMetadata(BaseModel):
+    element: list[str] = Field(Query([]))
+
+    beam_energy_eV: list[float] = Field([])
+    lower_beam_energy_eV: float | None = Field(None)
+    upper_beam_energy_eV: float | None = Field(None)
+
+    beam_current_mA: list[float] = Field(Query([]))
+    lower_beam_current_mA: float | None = Field(None)
+    upper_beam_current_mA: float | None = Field(None)
+
+    gain: list[float] = Field(Query([]))
+    lower_gain: float | None = Field(None)
+    upper_gain: float | None = Field(None)
+
+    date_taken: list[str] = Field(Query([]))
+    lower_date_taken: str = Field('')
+    upper_date_taken: str = Field('')
+    time_taken: str = Field('')
+
+    date_added: list[str] = Field(Query([]))
+    lower_date_added: str = Field('')
+    upper_date_added: str = Field('')
+    time_added: str = Field('')
+
+    def validate_submission(self):
+        for attr, model_field in self.__fields__.items():
+            attr_type = model_field.annotation
+            attr_val = getattr(self, attr)
+
+            if attr_val is None:
+                continue
+
+            if check_parameterized_generic(attr_type):
+                continue
+
+            if check_numeric(attr_type):
+                if 'lower_' in attr or 'upper_' in attr:
+                    base_attr = attr[6:]
+                    if getattr(self, base_attr) is not None:
+                        raise HTTPException(status_code=415, detail=f'Only one of {attr} and {base_attr} can be query '
+                                                                    f'parameters.')
+
+        return True
+
+
+class CalibrationMetadata(BaseModel):
+    function: str = Field('')
+    popt: list[float] = Field(Query([]))
+    pcov: list[list[float]] = Field(Query([]))
+    unadjusted_chisqr: list
+
+
+class SearchCalibrationMetadata(BaseModel):
+
+    func: str = Field('')
+
+    line_ids: list[str] = Field(Query([]))
+    spectra_used: list[str] = Field(Query([]))
+
+    cal_id: str
+
+
 def check_parameterized_generic(field_type):
     try:  # issubclass throws error if field_type includes list[any_type]
         issubclass(Any, field_type)
@@ -86,7 +149,7 @@ def make_search_class(metadata_class, needs_bounds: list | None = None):
             cls_dict[key] = None
 
     cls = type("Search_" + type(metadata_class).__name__, (BaseModel,), cls_dict)
-    cls.validate_submission = validate_submission
+    # cls.validate_submission = validate_submission
     return cls
 
 
@@ -254,6 +317,23 @@ class New_EUVH5_Handler:
         self.add_auto_attrs(dataset)
         self.write_meta_dict(dataset)
 
+    def add_calibration_dataset(self, run, name, solution_arr, popt, pcov, metadata=None):
+
+        if solution_arr.shape[1] != 4:
+            raise ValueError(f'solution_arr should have shape [N, 4]. Found shape {solution_arr.shape} instead.')
+
+        f = h5py.File(self.h5_file, 'a')
+
+        g = f[run]
+        ds = g.create_dataset(name, data=solution_arr)
+        ds.attrs['popt'] = popt
+        ds.attrs['pcov'] = pcov
+
+        if metadata is not None:
+            ds.attrs.update(metadata)
+
+        f.close()
+
     def search(self, query_dict, return_type: Literal["metadata", "spectra"] = "metadata", per_page=0, page_number=0):
         # filters df until out of query_dict, then retrieves files from EUV.h5
         df = pd.read_pickle(self.meta_file)
@@ -292,9 +372,9 @@ class New_EUVH5_Handler:
         if per_page == 0:
             per_page = len(df) - 1
             page_number = 0
-            low_index, high_index = 0, len(df) - 1
+            low_index, high_index = 0, len(df)
         else:
-            low_index, high_index = per_page * page_number, min(len(df) - 1, per_page * (page_number+1))
+            low_index, high_index = per_page * page_number, min(len(df), per_page * (page_number+1))
 
         search_metadata = {"page": page_number, "per_page": per_page,
                            "page_count": high_index - low_index, "total_count": len(df)}
@@ -306,24 +386,6 @@ class New_EUVH5_Handler:
         elif return_type == 'spectra':
             f = h5py.File(self.h5_file, 'r')
             return f, [f[path] for path in df['path']], search_metadata
-
-
-# def create_datasets_archive(datasets, filename='write_test.zip'):
-#     zip_archive_path = os.path.join('writeTest', filename)
-#     with open(zip_archive_path, 'wb') as fo:
-#         with ZipFile(fo, "w") as zip_archive:
-#             for dataset in datasets:
-#                 write_dataset_to_archive(dataset, zip_archive)
-#
-#
-# def write_dataset_to_archive(dataset, zip_archive):
-#
-#     filepath = dataset.name.replace('/', '_') + '.txt'
-#     attr_str = json.dumps({key: value for key, value in dataset.attrs.items()}, default=np_encoder)
-#     s = StringIO()
-#     np.savetxt(s, filter_cosmic_rays(dataset[...]), newline=',', fmt='%8d')
-#
-#     zip_archive.writestr(filepath, attr_str + '\n' + '-' * 32 + '\n' + s.getvalue())
 
 
 def filter_cosmic_rays(data, filterval=5, combine=True):
@@ -356,7 +418,7 @@ def filter_cosmic_rays(data, filterval=5, combine=True):
 NEUV = New_EUVH5_Handler(h5_file=H5_FILE_LOC,
                          meta_file=META_FILE_LOC)
 
-Search_Spectra_Metadata = make_search_class(Spectra_Metadata, needs_bounds=['date_taken', 'date_added'])
+# Search_Spectra_Metadata = make_search_class(Spectra_Metadata, needs_bounds=['date_taken', 'date_added'])
 
 
 def np_encoder(obj):
@@ -364,18 +426,13 @@ def np_encoder(obj):
         return obj.item()
 
 
-@app.get("/hello")
-def read_root(test: int = 1, page_number: int = 0):
-    print(test, page_number)
-    return {"Hello": "World"}
-
-
 @app.get("/spectra/metadata/")
-def get_metadata(search_spectra_metadata: Search_Spectra_Metadata, page: int=0, per_page: int=0):
+def get_metadata(search_spectra_metadata: SearchSpectraMetadata = Depends(), page: int = 0, per_page: int = 0):
     ssm = search_spectra_metadata
     ssm.validate_submission()
+    print(vars(ssm))
 
-    spectra_metadata, search_metadata = NEUV.search({key: value for key, value in vars(ssm).items() if value is not None},
+    spectra_metadata, search_metadata = NEUV.search({key: value for key, value in vars(ssm).items() if value},
                                                     return_type="metadata", page_number=page, per_page=per_page)
 
     response = dict()
@@ -386,15 +443,14 @@ def get_metadata(search_spectra_metadata: Search_Spectra_Metadata, page: int=0, 
 
 
 @app.get("/spectra/data")
-def get_spectra(search_spectra_metadata: Search_Spectra_Metadata, page: int = 0, per_page: int = 0):
-    ssm = search_spectra_metadata
-    ssm.validate_submission()
+def get_spectra(ids: str):
 
-    f, datasets, search_metadata = NEUV.search({key: value for key, value in vars(ssm).items() if value is not None},
-                                               return_type="spectra", page_number=page, per_page=per_page)
+    ids = [int(spec_id) for spec_id in ids.split(',')]
+
+    f, datasets, search_metadata = NEUV.search({"spectra_id": ids}, return_type="spectra")
 
     response = dict()
-    response['records'] = {ds.attrs['path']: {'data': ds[...], **ds.attrs} for ds in datasets}
+    response['records'] = {ds.attrs['path']: {'data': filter_cosmic_rays(ds[:]).tolist(), **ds.attrs} for ds in datasets}
     response['metadata'] = search_metadata
 
     f.close()
